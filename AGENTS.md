@@ -49,6 +49,7 @@ A `justfile` is provided at the root with longer recipes (`just install`, `just 
 | Controller / orchestrator                            | `cosmos_framework/controller/`                  |
 | Launchers (Slurm, torchrun, k8s)                     | `cosmos_framework/launcher/`                    |
 | Evaluation harness                                   | `cosmos_framework/evaluation/`                  |
+| World model for host-managed MBRL                    | `cosmos_framework/world_models/`                |
 | CLI tools                                            | `cosmos_framework/tools/`, `tools/` (repo root) |
 
 For a per-subpackage tour with descriptions, see [`docs/code_structure.md`](./docs/code_structure.md).
@@ -74,6 +75,7 @@ For a per-subpackage tour with descriptions, see [`docs/code_structure.md`](./do
 | [docs/training.md](./docs/training.md)             | Single- and multi-node launches, parallelism, mixed precision.    |
 | [docs/inference.md](./docs/inference.md)           | Sample arguments, parallelism, schemas, troubleshooting.          |
 | [docs/faq.md](./docs/faq.md)                       | Troubleshooting (OOM, NCCL, slow training) + env vars.            |
+| [docs/world_models.md](./docs/world_models.md)     | Cosmos3 as a world model inside a host MBRL trainer.              |
 
 Agent skills (codebase navigation, env troubleshooting, inference, post-training, setup) live in [`.agents/skills/`](./.agents/skills) and [`.claude/skills/`](./.claude/skills).
 

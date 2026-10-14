@@ -655,6 +655,7 @@ def pack_input_sequence(
                     action_fps=action_fps,
                     base_temporal_compression_factor=temporal_compression_factor,
                     action_start_frame_offset=sequence_plan.action_start_frame_offset,
+                    action_frame_indexes=sequence_plan.action_frame_indexes,
                 )
                 sample_len += action_split_len
             else:

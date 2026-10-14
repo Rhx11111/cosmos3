@@ -462,6 +462,7 @@ class PackedSequenceBuilder:
         action_fps: float | None = None,
         base_temporal_compression_factor: int | None = None,
         action_start_frame_offset: int = 1,
+        action_frame_indexes: list[int] | None = None,
     ) -> int:
         """Pack action tokens into the sequence.
 
@@ -480,11 +481,20 @@ class PackedSequenceBuilder:
                 Only affects behavior when FPS modulation is enabled.
             action_start_frame_offset: Frame offset for aligning action[0] with the
                 corresponding vision frame. Default 1 aligns action[0] with vision frame 1.
+            action_frame_indexes: Explicit vision frame index per action row. Overrides
+                the consecutive layout starting at ``action_start_frame_offset`` so one
+                payload can hold several row streams (e.g. actions, then states) that
+                each run on the vision clock. Must have one entry per row.
 
         Returns:
             Number of action tokens added.
         """
         action_split_len = input_action_tokens.shape[0]
+        if action_frame_indexes is not None and len(action_frame_indexes) != action_split_len:
+            raise ValueError(
+                f"action_frame_indexes must have one entry per action row; got {len(action_frame_indexes)} "
+                f"entries for {action_split_len} rows."
+            )
 
         action = self.ensure_action()
 
@@ -513,8 +523,13 @@ class PackedSequenceBuilder:
         # so action[0] (null token) aligns with vision frame 1, not frame 0.
         effective_fps = action_fps if enable_fps_modulation else None
 
+        # Explicit frame indexes are gathered from one consecutive grid that spans
+        # them, so every row lands exactly where the consecutive layout would have
+        # put a row of that frame.
+        first_frame = min(action_frame_indexes) if action_frame_indexes is not None else action_start_frame_offset
+        grid_t = max(action_frame_indexes) - first_frame + 1 if action_frame_indexes is not None else action_split_len
         action_mrope_ids, _ = get_3d_mrope_ids_vae_tokens(
-            grid_t=action_split_len,
+            grid_t=grid_t,
             grid_h=1,
             grid_w=1,
             temporal_offset=action_temporal_offset,
@@ -523,8 +538,10 @@ class PackedSequenceBuilder:
             base_fps=base_fps,
             temporal_compression_factor=1,  # Action is at frame rate (no temporal compression)
             base_temporal_compression_factor=base_temporal_compression_factor,
-            start_frame_offset=action_start_frame_offset,  # Align action[0] with vision frame action_start_frame_offset
-        )  # action_mrope_ids: [3,N_action_tokens]
+            start_frame_offset=first_frame,  # Align action[0] with vision frame first_frame
+        )  # action_mrope_ids: [3,grid_t]
+        if action_frame_indexes is not None:
+            action_mrope_ids = action_mrope_ids[:, [idx - first_frame for idx in action_frame_indexes]]  # [3,T_action]
         # Note: we don't update _mrope_temporal_offset here because action tokens
         # share the temporal space with vision tokens (they run in parallel).
 
@@ -1216,6 +1233,12 @@ class SequencePlan:
             [] means all steps are noised/supervised.
             All steps specified means all steps are clean (no MSE supervision).
         action_start_frame_offset: Frame offset for aligning action[0] to vision frames.
+        action_frame_indexes: Optional explicit vision frame index for every action row,
+            overriding the consecutive ``action_start_frame_offset`` layout. Lets one
+            action payload carry several row streams on the same clock, e.g. history
+            actions followed by proprioceptive states that restart at the first
+            conditioning frame. Values may be negative (history before frame 0) and
+            repeat across streams; the list length must equal the payload's row count.
         has_sound: Whether sound/audio input is present.
         condition_frame_indexes_sound: Indexes of sound frames that are clean/conditioning.
             [] means all frames are noised/supervised.
@@ -1248,6 +1271,7 @@ class SequencePlan:
     has_action: bool = False
     condition_frame_indexes_action: list[int] = field(default_factory=list)
     action_start_frame_offset: int = 1
+    action_frame_indexes: list[int] | None = None
 
     # -- sound modality --
     has_sound: bool = False
@@ -1263,6 +1287,7 @@ class SequencePlan:
             "condition_frame_indexes_vision": self.condition_frame_indexes_vision,
             "condition_frame_indexes_lidar": self.condition_frame_indexes_lidar,
             "condition_frame_indexes_action": self.condition_frame_indexes_action,
+            "action_frame_indexes": self.action_frame_indexes,
             "condition_frame_indexes_sound": self.condition_frame_indexes_sound,
             "share_vision_temporal_positions": self.share_vision_temporal_positions,
             "vision_temporal_position_groups": self.vision_temporal_position_groups,

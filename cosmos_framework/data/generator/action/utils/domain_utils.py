@@ -55,6 +55,11 @@ EMBODIMENT_TO_DOMAIN_ID: dict[str, int] = {
     # RoboCasa PandaOmron mobile manipulation (10/15/20D raw action per
     # ``use_base_action`` / ``base_encoding``); appended above the maximum.
     "robocasa": 30,
+    # LIBERO proprioception predicted alongside forward dynamics (EEF xyz,
+    # axis-angle, two gripper finger positions). Its own slot so the state rows
+    # train their own action2llm/llm2action weights instead of sharing LIBERO's
+    # 7D OSC_POSE controller-input projection.
+    "libero_state": 31,
 }
 
 
@@ -89,6 +94,7 @@ EMBODIMENT_TO_RAW_ACTION_DIM: dict[str, int] = {
     "so101-bimanual-midtrain-conditional": 20,
     "geniesim3_g2a": 29,
     "geniesim3_g2a_joint": 16,
+    "libero_state": 8,  # [eef_pos(3), eef_axis_angle(3), gripper_qpos(2)]
     # NOTE: ``libero`` (7/10/13 depending on ``rotation_space``), ``hand_pose``
     # (variable with ``keypoint_option`` and ``rotation_format``) and ``robocasa``
     # (10 arm-only, 15/20 with the mobile base, per ``use_base_action`` /
