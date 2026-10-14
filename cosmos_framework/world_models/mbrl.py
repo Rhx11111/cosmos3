@@ -75,6 +75,9 @@ def edge_model_config(
     config_file: Path = EDGE_MODEL_CONFIG,
 ) -> dict:
     """Return the Cosmos3-Edge model config bound to local assets and stripped of training infrastructure."""
+    # instantiate_model() runs from the package root, which would otherwise
+    # resolve a relative asset path against the package instead of the caller.
+    checkpoint_dir, vae_path = Path(checkpoint_dir).resolve(), Path(vae_path).resolve()
     model = deserialize_config_dict(Path(config_file))["model"]
     config = model["config"]
     model["_target_"] = f"{Cosmos3MBRLModel.__module__}.{Cosmos3MBRLModel.__qualname__}"
