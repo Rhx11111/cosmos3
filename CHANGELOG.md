@@ -9,6 +9,9 @@
 - Breaking changes
   - `requires-python` is now `>=3.11`; `nvidia-cudnn-frontend` and `uv` moved to the `cudnn-attention` and `launcher` extras.
 
+- Other changes
+  - The fork carries no GitHub Actions workflows: upstream's `docker-build`, `gpu-tests` and `pre-commit` target NVIDIA's self-hosted GPU runners and container registry, and the fork does not ship upstream's `uv.lock` that the Docker build locks against.
+
 ## 1.2.2 (May 14, 2026)
 
 - New features
