@@ -17,10 +17,16 @@ __all__ = [
 ]
 
 if TRAINING:
-    from cosmos_framework.utils.easy_io.backends.boto3_backend import Boto3Backend
-    from cosmos_framework.utils.easy_io.backends.msc_backend import MSCBackend
-
-    __all__ += [
-        "Boto3Backend",
-        "MSCBackend",
-    ]
+    # boto3 and multistorageclient are optional object-store dependencies; a
+    # local-only install (e.g. a host training framework embedding the model)
+    # keeps the disk/HTTP backends without them.
+    try:
+        from cosmos_framework.utils.easy_io.backends.boto3_backend import Boto3Backend
+        from cosmos_framework.utils.easy_io.backends.msc_backend import MSCBackend
+    except ImportError:
+        pass
+    else:
+        __all__ += [
+            "Boto3Backend",
+            "MSCBackend",
+        ]

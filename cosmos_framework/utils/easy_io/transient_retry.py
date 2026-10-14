@@ -19,15 +19,6 @@ import time
 from http.client import IncompleteRead
 from typing import Callable, TypeVar
 
-from botocore.exceptions import (
-    ConnectionClosedError,
-    EndpointConnectionError,
-    ResponseStreamingError,
-)
-from botocore.exceptions import (
-    ReadTimeoutError as BotocoreReadTimeoutError,
-)
-from multistorageclient.types import RetryableError
 from urllib3.exceptions import ProtocolError as URLLib3ProtocolError
 from urllib3.exceptions import ReadTimeoutError as URLLib3ReadTimeoutError
 from urllib3.exceptions import SSLError as URLLib3SSLError
@@ -42,6 +33,36 @@ __all__ = [
 
 T = TypeVar("T")
 
+# The object-store SDKs are optional dependencies: without them there is no
+# transport that can raise their errors, so the retry set simply shrinks.
+_OBJECT_STORE_EXCEPTIONS: tuple[type[BaseException], ...] = ()
+try:
+    from botocore.exceptions import (
+        ConnectionClosedError,
+        EndpointConnectionError,
+        ResponseStreamingError,
+    )
+    from botocore.exceptions import (
+        ReadTimeoutError as BotocoreReadTimeoutError,
+    )
+except ImportError:
+    pass
+else:
+    # AWS SDK for Python (boto)
+    _OBJECT_STORE_EXCEPTIONS += (
+        BotocoreReadTimeoutError,
+        ConnectionClosedError,
+        EndpointConnectionError,
+        ResponseStreamingError,
+    )
+try:
+    from multistorageclient.types import RetryableError
+except ImportError:
+    pass
+else:
+    # NVIDIA Multi-Storage Client (MSC)
+    _OBJECT_STORE_EXCEPTIONS += (RetryableError,)
+
 # Exceptions that indicate a *transient* transport failure and are worth
 # retrying. These are connection/timeout/SSL/protocol errors -- never logical
 # errors (e.g. a missing key, bad credentials, or a programming bug).
@@ -54,13 +75,7 @@ RETRYABLE_EXCEPTIONS = (
     URLLib3ReadTimeoutError,
     URLLib3ProtocolError,
     URLLib3SSLError,
-    # AWS SDK for Python (boto)
-    BotocoreReadTimeoutError,
-    ConnectionClosedError,
-    EndpointConnectionError,
-    ResponseStreamingError,
-    # NVIDIA Multi-Storage Client (MSC)
-    RetryableError,
+    *_OBJECT_STORE_EXCEPTIONS,
 )
 
 # Default retry policy. Tuned for transient SSL / connection resets seen on

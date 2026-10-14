@@ -12,7 +12,7 @@ authors = [
   {name = "NVIDIA Corporation"},
 ]
 description = "Cosmos-Framework: Cosmos3 World Foundation Model (WFM)"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = {text = "OpenMDW-1.1"}
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -22,32 +22,51 @@ classifiers = [
   "Programming Language :: Python",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+# Core dependencies stay lower-bounded so the package resolves inside a host
+# training environment with its own torch/transformers/diffusers pins (the
+# world-model integration validates torch 2.7.1, transformers 5.8, diffusers
+# 0.33). The cuDNN attention backend and the uv launcher are optional extras.
 dependencies = [
   "accelerate",
+  "attrs",
   "av",
   "cattrs",
-  "diffusers>=0.39.0",
+  "diffusers>=0.33.1",
   "einops",
+  "filelock",
   "hydra-core",
   "imageio-ffmpeg",
   "imageio",
+  "iopath",
   "loguru",
   "msgpack",
-  "nvidia-cudnn-frontend",
   "nvidia-ml-py",
   "obstore",
   "omegaconf",
   "pydantic",
   "requests",
+  "safetensors",
   "scipy",
   "termcolor",
-  "transformers>=4.57.1,<5.0.0",
+  "transformers>=4.57.1",
+  "typing_extensions",
   "tyro",
-  "uv",
   "websockets",
 ]
 
 [project.optional-dependencies]
+cudnn-attention = [
+  "nvidia-cudnn-frontend",
+]
+launcher = [
+  "uv",
+]
+# Everything the MBRL world-model facade (cosmos_framework.world_models) needs
+# beyond the core: the VLM processors' video helpers. torch, torchvision and
+# flash-attn come from the host environment.
+world-model = [
+  "qwen-vl-utils",
+]
 guardrail = [
   "better-profanity",
   "nltk",

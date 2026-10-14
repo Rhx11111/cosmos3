@@ -7,7 +7,7 @@ import pickle
 from collections.abc import Callable, Generator, Iterable, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Sequence, TypeVar, cast, override
+from typing import TYPE_CHECKING, Any, Literal, Sequence, TypeVar, cast
 
 import attrs
 import cattrs
@@ -18,7 +18,7 @@ from PIL import Image
 from qwen_vl_utils.vision_process import smart_nframes
 from torch.utils._pytree import tree_map_only
 from torch.utils.data import Dataset
-from typing_extensions import Self
+from typing_extensions import Self, override
 
 from cosmos_framework.configs.base.defaults.compile import CompileConfig
 from cosmos_framework.configs.base.defaults.parallelism import ParallelismConfig

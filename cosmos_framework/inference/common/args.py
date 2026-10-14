@@ -22,7 +22,6 @@ from typing import (
     NoReturn,
     TypeVar,
     overload,
-    override,
 )
 
 import omegaconf
@@ -30,7 +29,7 @@ import pydantic
 import tyro
 import yaml
 from omegaconf import OmegaConf
-from typing_extensions import Self, assert_never
+from typing_extensions import Self, assert_never, override
 from tyro.conf import Suppress
 
 from cosmos_framework.inference.common.config import deserialize_config_dict, structure_config, unstructure_config

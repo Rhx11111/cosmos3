@@ -14,12 +14,21 @@ import torch
 import torch.distributed.checkpoint as dcp
 import transformers
 from torch.distributed.checkpoint.filesystem import FileSystemReader
-from torch.distributed.checkpoint.hf_storage import (
-    CUSTOM_METADATA_KEY,
-    SAVED_OFFSETS_KEY,
-    HuggingFaceStorageReader,
-    _HFStorageInfo,
-)
+
+try:
+    from torch.distributed.checkpoint.hf_storage import (
+        CUSTOM_METADATA_KEY,
+        SAVED_OFFSETS_KEY,
+        HuggingFaceStorageReader,
+        _HFStorageInfo,
+    )
+except ImportError:
+    # torch < 2.8 ships only a private reader with a different API. Keep the
+    # module importable for its key-mapping helpers; the diffusers readers below
+    # refuse to construct, and callers load safetensors directly instead.
+    from torch.distributed.checkpoint._hf_storage import _HuggingFaceStorageReader as HuggingFaceStorageReader
+
+    CUSTOM_METADATA_KEY = SAVED_OFFSETS_KEY = _HFStorageInfo = None
 from torch.distributed.checkpoint.metadata import (
     STORAGE_TYPES,
     ChunkStorageMetadata,
@@ -374,6 +383,8 @@ class _DiffusersHuggingFaceStorageReader(_MmapSafeReadMixin, HuggingFaceStorageR
     """Hugging Face safetensors reader that follows diffusers' root weight map."""
 
     def __init__(self, checkpoint_path: Path) -> None:
+        if _HFStorageInfo is None:
+            raise ImportError("Loading diffusers checkpoints through DCP requires torch >= 2.8.")
         super().__init__(str(checkpoint_path))
         self.checkpoint_path = checkpoint_path
         self.files_to_keys = _diffusers_files_to_keys(_diffusers_weight_map(checkpoint_path))
