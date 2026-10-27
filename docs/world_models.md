@@ -15,13 +15,19 @@ The package installs into a host environment with its own PyTorch stack:
 pip install -e ".[world-model]"
 ```
 
-Validated: Python 3.11, torch 2.7.1 (CUDA 12.6), transformers 5.8, diffusers
-0.33, flash-attn 2.8.3. Object-store SDKs (`boto3`, `multistorageclient`) are
-optional; without them the disk and HTTP `easy_io` backends remain. The
-attention frontend selects `flash2` on such a host; pin it with
-`I4_ATTN_BACKENDS=flash2`. The attention kernels need CUDA: the CPU covers
-tokenization, VAE encoding, prompt rendering, sequence packing and noising, not
-the network forward.
+Validated: Python 3.11, torch 2.10.0 (CUDA 12.8), transformers 5.8, diffusers
+0.33, `flash-attn-3-nv` 1.0.3 (`+cu128.torch210`, Hopper GPUs), with
+`I4_ATTN_BACKENDS=flash3`. Object-store SDKs (`boto3`, `multistorageclient`) are
+optional; without them the disk and HTTP `easy_io` backends remain.
+
+The MoT network packs variable-length sequences, so the attention frontend needs
+a varlen backend, and only FlashAttention 3 and NATTEN qualify: flash2 varlen is
+banned (`model/attention/flash2/checks.py`, which also accepts only flash-attn
+2.7.0 to 2.7.4.post1), and the cuDNN backend has no varlen. The FlashAttention 3
+and NATTEN wheels are built for torch 2.10 or later, so the CUDA path needs such
+a host. The package still imports on torch 2.7 (Python 3.11, transformers 5,
+diffusers 0.33), where the CPU covers tokenization, VAE encoding, prompt
+rendering, sequence packing and noising, not the network forward.
 
 The fork does not carry upstream's `uv.lock`: the relaxed `pyproject.toml`
 dependencies resolve inside the host environment, and hosts install with pip as
@@ -101,7 +107,7 @@ fewer rows (`history_actions ≤ 4`, `1 ≤ history_states ≤ 5`).
 COSMOS_DEVICE=cpu CUDA_VISIBLE_DEVICES= python tools/mbrl_check.py \
     --checkpoint ~/run/models/Cosmos3-Edge --vae /path/to/Wan2.2_VAE.pth
 # CUDA: additionally one training forward/backward and one prediction.
-I4_ATTN_BACKENDS=flash2 python tools/mbrl_check.py --checkpoint ... --vae ...
+I4_ATTN_BACKENDS=flash3 python tools/mbrl_check.py --checkpoint ... --vae ...
 ```
 
 The check asserts the forward-dynamics parameter set, finite weights, the

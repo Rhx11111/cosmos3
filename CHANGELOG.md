@@ -4,7 +4,7 @@
 
 - New features
   - Add [`cosmos_framework.world_models`](./docs/world_models.md): Cosmos3-Edge forward dynamics as a host-managed world model with joint video and proprioceptive-state prediction (`libero_state` domain 31, explicit per-row vision frame indexes via `SequencePlan.action_frame_indexes`).
-  - Install into host environments on torch 2.7.1 / transformers 5 / diffusers 0.33: relaxed dependency bounds, optional object-store SDKs, `typing_extensions.override`, torch < 2.8 import of `inference/model.py`.
+  - Install into host environments with their own torch / transformers 5 / diffusers 0.33: relaxed dependency bounds, optional object-store SDKs, `typing_extensions.override`, torch < 2.8 import of `inference/model.py`. The CUDA path is validated on torch 2.10 with `flash-attn-3-nv` (`I4_ATTN_BACKENDS=flash3`); torch 2.7 hosts have no varlen attention backend and cover only the CPU path.
 
 - Breaking changes
   - `requires-python` is now `>=3.11`; `nvidia-cudnn-frontend` and `uv` moved to the `cudnn-attention` and `launcher` extras.

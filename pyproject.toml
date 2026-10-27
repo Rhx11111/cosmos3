@@ -24,8 +24,9 @@ classifiers = [
 ]
 # Core dependencies stay lower-bounded so the package resolves inside a host
 # training environment with its own torch/transformers/diffusers pins (the
-# world-model integration validates torch 2.7.1, transformers 5.8, diffusers
-# 0.33). The cuDNN attention backend and the uv launcher are optional extras.
+# world-model integration validates torch 2.10.0 with flash-attn-3-nv 1.0.3,
+# transformers 5.8, diffusers 0.33; see docs/world_models.md). The cuDNN
+# attention backend and the uv launcher are optional extras.
 dependencies = [
   "accelerate",
   "attrs",
@@ -63,7 +64,7 @@ launcher = [
 ]
 # Everything the MBRL world-model facade (cosmos_framework.world_models) needs
 # beyond the core: the VLM processors' video helpers. torch, torchvision and
-# flash-attn come from the host environment.
+# flash-attn-3-nv come from the host environment.
 world-model = [
   "qwen-vl-utils",
 ]
