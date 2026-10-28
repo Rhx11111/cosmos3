@@ -19,14 +19,11 @@ from typing import Any
 
 from torch.utils.data import Dataset, IterableDataset, get_worker_info
 
-from cosmos_framework.data.generator.action.datasets.droid_lerobot_dataset import DROIDLeRobotDataset
-from cosmos_framework.data.generator.action.datasets.droid_merged_lerobot_dataset import DROIDMergedLeRobotDataset
-from cosmos_framework.data.generator.action.datasets.libero_lerobot_dataset import LIBEROLeRobotDataset
-from cosmos_framework.data.generator.action.datasets.robocasa_lerobot_dataset import (
-    DEFAULT_ALL_ATOMIC_TASKS,
-    RoboCasaLeRobotDataset,
-)
+from cosmos_framework.data.generator.action.datasets.robocasa_tasks import DEFAULT_ALL_ATOMIC_TASKS
 from cosmos_framework.data.generator.action.utils.transforms import ActionTransformPipeline
+
+# The LeRobot-backed dataset classes are imported inside the factories, so experiment
+# configs can reference the factories without the optional ``lerobot`` package.
 
 
 class ActionSFTDataset(Dataset):
@@ -139,6 +136,8 @@ def get_action_droid_sft_dataset(
         filter_dict_path=filter_dict_path,
         use_success_only=use_success_only,
     )
+    from cosmos_framework.data.generator.action.datasets.droid_lerobot_dataset import DROIDLeRobotDataset
+
     dataset: Dataset = DROIDLeRobotDataset(root=root, **shard_kwargs)
     transform = ActionTransformPipeline(
         tokenizer_config=tokenizer_config,
@@ -186,6 +185,8 @@ def get_action_droid_merged_lerobot_sft_dataset(
     episode_shuffle_seed: int = 42,
 ) -> Dataset:
     """Build the DROID-Merged LeRobot SFT dataset for action FD recipes."""
+    from cosmos_framework.data.generator.action.datasets.droid_merged_lerobot_dataset import DROIDMergedLeRobotDataset
+
     dataset = DROIDMergedLeRobotDataset(
         root=root,
         fps=fps,
@@ -274,6 +275,8 @@ def get_action_robocasa_sft_dataset(
     identity round-trip and the base channels share the arm's scale; ``"ego"`` is retained
     as the default so existing configs and checkpoints reproduce unchanged.
     """
+    from cosmos_framework.data.generator.action.datasets.robocasa_lerobot_dataset import RoboCasaLeRobotDataset
+
     dataset: Dataset = RoboCasaLeRobotDataset(
         root=root,
         fps=fps,
@@ -347,6 +350,8 @@ def get_action_libero_sft_dataset(
     dataset is FPS-agnostic (decodes at real frame timestamps); ``fps`` is metadata
     for ``conditioning_fps`` / prompt duration.
     """
+    from cosmos_framework.data.generator.action.datasets.libero_lerobot_dataset import LIBEROLeRobotDataset
+
     dataset = LIBEROLeRobotDataset(
         root=root,
         image_size=image_size,

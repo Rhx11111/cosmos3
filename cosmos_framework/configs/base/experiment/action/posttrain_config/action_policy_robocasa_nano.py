@@ -33,7 +33,7 @@ from hydra.core.config_store import ConfigStore
 
 from cosmos_framework.configs.base.experiment.sft.models.nano_model_config import NANO_MODEL_CONFIG
 from cosmos_framework.data.generator.action.datasets.action_sft_dataset import get_action_robocasa_sft_dataset
-from cosmos_framework.data.generator.action.datasets.robocasa_lerobot_dataset import DEFAULT_ALL_ATOMIC_TASKS
+from cosmos_framework.data.generator.action.datasets.robocasa_tasks import DEFAULT_ALL_ATOMIC_TASKS
 from cosmos_framework.data.generator.joint_dataloader import (
     PackingDataLoader,
     RankPartitionedDataLoader,

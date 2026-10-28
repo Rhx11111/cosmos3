@@ -8,20 +8,33 @@ All concrete datasets inherit from :class:`ActionBaseDataset` and expose a
 statistics without instantiating the dataset.
 """
 
-from cosmos_framework.data.generator.action.datasets.agibotworld_beta_lerobot_dataset import (
-    AgiBotWorldBetaLeRobotDataset,
-)
-from cosmos_framework.data.generator.action.datasets.base_dataset import ActionBaseDataset
-from cosmos_framework.data.generator.action.datasets.bridge_orig_lerobot_dataset import BridgeOrigLeRobotDataset
-from cosmos_framework.data.generator.action.datasets.droid_merged_lerobot_dataset import DROIDMergedLeRobotDataset
-from cosmos_framework.data.generator.action.datasets.droid_lerobot_dataset import DROIDLeRobotDataset
-from cosmos_framework.data.generator.action.datasets.fractal_lerobot_dataset import FractalLeRobotDataset
-from cosmos_framework.data.generator.action.datasets.human_hand_pose_lerobot_dataset import HumanHandPoseLeRobotDataset
-from cosmos_framework.data.generator.action.datasets.robocasa_lerobot_dataset import RoboCasaLeRobotDataset
-from cosmos_framework.data.generator.action.datasets.libero_lerobot_dataset import LIBEROLeRobotDataset
-from cosmos_framework.data.generator.action.datasets.robomind_franka_dataset import RoboMINDFrankaDataset
-from cosmos_framework.data.generator.action.datasets.robomind_ur_dataset import RoboMINDURDataset
-from cosmos_framework.data.generator.action.datasets.umi_lerobot_dataset import UMILeRobotDataset
+import importlib
+
+# Imported on first access: most of these datasets need the optional ``lerobot`` package,
+# which importing a sibling module (for example ``action_sft_dataset``) must not require.
+_LAZY_EXPORTS = {
+    "AgiBotWorldBetaLeRobotDataset": "agibotworld_beta_lerobot_dataset",
+    "ActionBaseDataset": "base_dataset",
+    "BridgeOrigLeRobotDataset": "bridge_orig_lerobot_dataset",
+    "DROIDMergedLeRobotDataset": "droid_merged_lerobot_dataset",
+    "DROIDLeRobotDataset": "droid_lerobot_dataset",
+    "FractalLeRobotDataset": "fractal_lerobot_dataset",
+    "HumanHandPoseLeRobotDataset": "human_hand_pose_lerobot_dataset",
+    "RoboCasaLeRobotDataset": "robocasa_lerobot_dataset",
+    "LIBEROLeRobotDataset": "libero_lerobot_dataset",
+    "RoboMINDFrankaDataset": "robomind_franka_dataset",
+    "RoboMINDURDataset": "robomind_ur_dataset",
+    "UMILeRobotDataset": "umi_lerobot_dataset",
+}
+
+
+def __getattr__(name: str):
+    if name not in _LAZY_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(importlib.import_module(f"{__name__}.{_LAZY_EXPORTS[name]}"), name)
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     "ActionBaseDataset",
