@@ -9,13 +9,18 @@ Flash Attention v3 (flash3) Backend: intermediate APIs
 Only safe to import when FLASH3_SUPPORTED is True.
 """
 
+import importlib
 import inspect
 
 import torch
 
-# pyrefly: ignore  # missing-import
-from flash_attn_3_nv.flash_attn_interface import flash_attn_func, flash_attn_varlen_func
 from torch import Tensor
+
+from cosmos_framework.model.attention.flash3 import FLASH3_PACKAGE
+
+_interface = importlib.import_module(f"{FLASH3_PACKAGE}.flash_attn_interface")
+flash_attn_func = _interface.flash_attn_func
+flash_attn_varlen_func = _interface.flash_attn_varlen_func
 
 # Treat the Flash-Attn entrypoints as opaque leaves for TorchDynamo. They wrap a Python
 # ``autograd.Function`` (``FlashAttnVarlenFunc``/``FlashAttnFunc``); when Dynamo tries to

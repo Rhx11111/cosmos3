@@ -32,6 +32,29 @@ import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetadata
 from torch.utils.data import Dataset
 
+class _RowFirstLeRobotDataset(LeRobotDataset):
+    """``LeRobotDataset`` that queries the rows of a sample, then their columns.
+
+    LeRobot 0.4 indexes a whole column first (``hf_dataset[key][indices]``),
+    which is lazy on ``datasets`` 4 but materializes every row of the column on
+    ``datasets`` 3 (minutes per sample on large shards). Selecting the rows
+    first returns the same tensors on both.
+    """
+
+    def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
+        keys = [key for key in query_indices if key not in self.meta.video_keys]
+        result: dict = {}
+        for key in keys:
+            q_idx = query_indices[key]
+            relative_indices = (
+                q_idx
+                if self._absolute_to_relative_idx is None
+                else [self._absolute_to_relative_idx[idx] for idx in q_idx]
+            )
+            result[key] = torch.stack(self.hf_dataset[relative_indices][key])
+        return result
+
+
 _hf_offline_applied = False
 
 
@@ -669,7 +692,7 @@ class BaseActionLeRobotDataset(Dataset):
                 delta_ts = {k: v for k, v in delta_ts.items() if not k.startswith("observation.image")}
 
             log.info(f"Loading shard root={build_args['root']}")
-            ds = LeRobotDataset(
+            ds = _RowFirstLeRobotDataset(
                 repo_id=build_args["repo_id"],
                 root=build_args["root"],
                 delta_timestamps=delta_ts,

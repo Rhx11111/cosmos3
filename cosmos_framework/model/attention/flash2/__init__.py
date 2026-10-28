@@ -43,6 +43,12 @@ def flash2_supported() -> bool:
         log.debug(f"Flash Attention v2 is not supported because importing the Python package failed: {e}")
         return False
 
+    # flash-attn-4 installs a bare ``flash_attn`` namespace package (``flash_attn.cute`` only)
+    # without the Flash Attention v2 kernels or distribution metadata.
+    if not hasattr(flash_attn, "flash_attn_varlen_func"):
+        log.debug("Flash Attention v2 is not supported because 'flash_attn' has no v2 kernels.")
+        return False
+
     flash2_version_str = None
     if not hasattr(flash_attn, "__version__"):
         from importlib.metadata import version
