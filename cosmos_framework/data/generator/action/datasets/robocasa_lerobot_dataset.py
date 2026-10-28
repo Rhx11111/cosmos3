@@ -31,8 +31,10 @@ left/right-on-bottom (mirrors ``DROIDLeRobotDataset._compose_multi_view``).
 from __future__ import annotations
 
 import glob
+import json
 import os
 import random
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -59,6 +61,8 @@ _IMAGE_FEATURES = {
     "left": "observation.images.robot0_agentview_left",
     "right": "observation.images.robot0_agentview_right",
 }
+# ``camera_set="three_view"`` camera-major order (matches the Saros RoboCasa view contract).
+_THREE_VIEW_ORDER = ("left", "right", "wrist")
 
 # Native 12D action layout (meta/modality.json): the arm-only contract keeps only
 # the arm end-effector delta + gripper.
@@ -238,6 +242,73 @@ _CONTROL_MODE = slice(4, 5)  # +1 = base mode (arm tracks the moving base), -1 =
 _BASE_MOTION = slice(0, 4)  # [forward, side, yaw, torso_height]; torso is never actuated
 
 
+# ``state_stream=True``: a per-frame native-state stream for world-model rollout (Saros native16).
+# native16 = [grip_pos_in_base(3), grip_quat_in_base_xyzw(4), base_pos_world(3),
+# base_quat_world_xyzw(4), finger_qpos(2)] -- the same definition as the pi0.5 rollout data's
+# ``observation.state`` and WMInfra ``prepare_robocasa_osc12.official_state_to_native``. The
+# grip-site orientation is the hand-body orientation @ HAND_TO_GRIP (a fixed local Rz(-90deg));
+# official exports store the hand body. Rotations are re-encoded to rot6d for the model:
+#
+#   [grip_pos(3), grip_rot6d(6), base_pos(3), base_rot6d(6), finger_qpos(2)]  (20D)
+HAND_TO_GRIP = torch.tensor([[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]], dtype=torch.float64)
+STATE_STREAM_DIM = 20
+STATE_STREAM_FIELDS: tuple[tuple[str, int], ...] = (
+    ("grip_pos_in_base", 3),
+    ("grip_rot6d_in_base", 6),
+    ("base_pos_world", 3),
+    ("base_rot6d_world", 6),
+    ("finger_qpos", 2),
+)
+_STATE_STD_FLOOR = 1e-3  # constant channels (e.g. base z) would otherwise divide by ~0
+
+
+def official_state_to_native16(state: torch.Tensor) -> torch.Tensor:
+    """Official RoboCasa ``observation.state`` ``[T,16]`` -> Saros native16 ``[T,16]``.
+
+    Official order: base_pos(3), base_quat_xyzw(4), eef_pos_in_base(3), hand_quat_xyzw(4),
+    gripper_qpos(2). Verified bit-exact (quaternions up to sign) against the rollout data's
+    native ``observation.state``.
+    """
+    s = state.double()
+    hand = convert_rotation(s[:, 10:14], input_format="quat_xyzw", output_format="matrix")  # [T,3,3]
+    grip = convert_rotation(hand @ HAND_TO_GRIP, input_format="matrix", output_format="quat_xyzw")  # [T,4]
+    return torch.cat([s[:, 7:10], grip, s[:, 0:7], s[:, 14:16]], dim=-1)
+
+
+def encode_native16_state(native16: torch.Tensor) -> torch.Tensor:
+    """native16 ``[T,16]`` -> unnormalized 20D state ``[T,20]`` (quaternions -> rot6d)."""
+    n = native16.double()
+    grip = convert_rotation(n[:, 3:7], input_format="quat_xyzw", output_format="rot6d")  # [T,6]
+    base = convert_rotation(n[:, 10:14], input_format="quat_xyzw", output_format="rot6d")  # [T,6]
+    return torch.cat([n[:, 0:3], grip, n[:, 7:10], base, n[:, 14:16]], dim=-1)
+
+
+def load_state_stats(path: str) -> dict[str, torch.Tensor]:
+    """Read ``mean``/``std`` (20D each) from a ``state_stats.py`` json; std is floored."""
+    with open(path) as f:
+        stats = json.load(f)
+    mean = torch.tensor(stats["mean"], dtype=torch.float64)
+    std = torch.tensor(stats["std"], dtype=torch.float64).clamp_min(_STATE_STD_FLOOR)
+    assert mean.shape == std.shape == (STATE_STREAM_DIM,), (mean.shape, std.shape)
+    return {"mean": mean, "std": std}
+
+
+def normalize_state(state20: torch.Tensor, stats: dict[str, torch.Tensor]) -> torch.Tensor:
+    return (state20.double() - stats["mean"]) / stats["std"]
+
+
+def decode_state(state20_normalized: torch.Tensor, stats: dict[str, torch.Tensor]) -> torch.Tensor:
+    """Normalized 20D state ``[T,20]`` -> native16 ``[T,16]`` (rot6d -> quat_xyzw).
+
+    Inverse of ``normalize_state(encode_native16_state(.))``; rot6d predictions are projected
+    back onto SO(3) by ``convert_rotation`` before the quaternion is taken.
+    """
+    s = state20_normalized.double() * stats["std"] + stats["mean"]
+    grip = convert_rotation(s[:, 3:9], input_format="rot6d", output_format="quat_xyzw")  # [T,4]
+    base = convert_rotation(s[:, 12:18], input_format="rot6d", output_format="quat_xyzw")  # [T,4]
+    return torch.cat([s[:, 0:3], grip, s[:, 9:12], base, s[:, 18:20]], dim=-1)
+
+
 class RoboCasaLeRobotDataset(BaseActionLeRobotDataset):
     """RoboCasa manipulation dataset.
 
@@ -269,6 +340,9 @@ class RoboCasaLeRobotDataset(BaseActionLeRobotDataset):
         camera_set: str = "wrist_lr",
         use_base_action: bool = False,
         base_encoding: str = "ego",
+        state_stream: bool = False,
+        state_stats_path: str | None = None,
+        split_file: str | None = None,
     ) -> None:
         if rotation_format != "rot6d":
             raise NotImplementedError(f"RoboCasa loader only supports rotation_format='rot6d', got {rotation_format!r}.")
@@ -307,9 +381,25 @@ class RoboCasaLeRobotDataset(BaseActionLeRobotDataset):
         #   "wrist_lr"   (default): concat_view = wrist (top) + L/R (bottom, squished to half).
         #   "left_wrist"          : LIBERO-style = agentview_left + wrist, full-res, horizontally
         #                           concatenated ([T,C,H,2W]); right cam DROPPED, no downscaling.
-        if camera_set not in ("wrist_lr", "left_wrist"):
-            raise ValueError(f"Unsupported camera_set={camera_set!r}. Use 'wrist_lr' or 'left_wrist'.")
+        #   "three_view"          : left, right and wrist as separate full-res views, camera-major
+        #                           along T ([3T,C,H,W]) with per-camera VAE encoding metadata.
+        if camera_set not in ("wrist_lr", "left_wrist", "three_view"):
+            raise ValueError(
+                f"Unsupported camera_set={camera_set!r}. Use 'wrist_lr', 'left_wrist' or 'three_view'."
+            )
         self._camera_set = camera_set
+        # state_stream: emit ``state`` [chunk+1, 20] (normalized native16, one row per observation
+        # frame, index 0 = current frame) for the world-model state stream.
+        self._state_stream = state_stream
+        if state_stream and state_stats_path is None:
+            raise ValueError("state_stream=True requires state_stats_path (see experiments/robocasa/state_stats.py).")
+        self._state_stats = load_state_stats(state_stats_path) if state_stream else None
+        # split_file: explicit held-out episodes per shard, {"<task>/<date>": [episode ids]}
+        # (experiments/robocasa/make_split.py). Replaces the random ``split_val_ratio`` split.
+        self._val_episodes: dict[str, set[int]] | None = None
+        if split_file is not None:
+            with open(split_file) as f:
+                self._val_episodes = {key: set(ids) for key, ids in json.load(f).items()}
 
         # Discover one LeRobot shard root per requested task under ``root``.
         self._all_shard_roots = self._discover_shard_roots(root, task_names)
@@ -319,18 +409,24 @@ class RoboCasaLeRobotDataset(BaseActionLeRobotDataset):
                 f"Expected <root>/<task>/*/lerobot directories."
             )
         log.info(f"RoboCasaLeRobotDataset: {len(self._all_shard_roots)} task shard(s): {self._all_shard_roots}")
+        # Keep every shard loaded: samples are drawn uniformly across shards, so an LRU smaller
+        # than the shard count rebuilds a LeRobotDataset on most misses.
+        self._max_loaded_datasets = max(self._max_loaded_datasets, len(self._all_shard_roots))
 
         # delta_timestamps: chunk_length per-frame action deltas; chunk_length+1
         # observation frames (one more image/state than transitions).
         observation_ts = [i * self._dt for i in range(0, self._chunk_length + 1)]
         action_ts = [i * self._dt for i in range(0, self._chunk_length)]
         self._delta_timestamps: dict[str, list[float]] = {_ACTION_FEATURE: action_ts}
-        if self._use_state:
+        if self._use_state or self._state_stream:
             self._delta_timestamps[_STATE_FEATURE] = observation_ts
         if self._camera_set == "left_wrist":
             # LIBERO-style: only agentview_left + wrist (right dropped).
             self._delta_timestamps[self._image_features["wrist"]] = observation_ts
             self._delta_timestamps[self._image_features["left"]] = observation_ts
+        elif self._camera_set == "three_view":
+            for view in _THREE_VIEW_ORDER:
+                self._delta_timestamps[self._image_features[view]] = observation_ts
         else:
             if self._viewpoint in ("wrist_view", "concat_view"):
                 self._delta_timestamps[self._image_features["wrist"]] = observation_ts
@@ -339,6 +435,36 @@ class RoboCasaLeRobotDataset(BaseActionLeRobotDataset):
                 self._delta_timestamps[self._image_features["right"]] = observation_ts
 
         self._register_sources()
+
+    def _filter_valid_episodes(self, meta: Any, episode_ids: list[int]) -> list[int]:
+        """With ``split_file``, select this shard's episodes from the file instead of the random split."""
+        if self._val_episodes is None:
+            return episode_ids
+        key = "/".join(Path(str(meta.root)).parts[-3:-1])  # <root>/<task>/<date>/lerobot -> "<task>/<date>"
+        if key not in self._val_episodes:
+            raise KeyError(f"split_file has no entry for shard {key!r}")
+        val = self._val_episodes[key]
+        if self._split == "val":
+            return sorted(val)
+        if self._split == "train":
+            return [e for e in range(meta.total_episodes) if e not in val]
+        return list(range(meta.total_episodes))
+
+    def _get_dataset(self, ds_idx: int) -> Any:
+        """Lazily build a shard, decoding only the cameras this ``camera_set`` reads.
+
+        LeRobot decodes the current frame of every video feature in the metadata, including
+        cameras absent from ``delta_timestamps``; dropping them saves a decoder open and seek
+        per unused camera per sample.
+        """
+        is_new = self._datasets[ds_idx] is None
+        ds = super()._get_dataset(ds_idx)
+        if is_new and not self._skip_video_loading:
+            features = ds.meta.info["features"]
+            ds.meta.info["features"] = {
+                k: v for k, v in features.items() if v.get("dtype") != "video" or k in self._delta_timestamps
+            }
+        return ds
 
     @staticmethod
     def _discover_shard_roots(root: str, task_names: tuple[str, ...] | list[str]) -> list[str]:
@@ -508,7 +634,14 @@ class RoboCasaLeRobotDataset(BaseActionLeRobotDataset):
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         mode, _, _, sample = self._fetch_sample(idx)
+        return self.build_from_lerobot_sample(sample, mode)
 
+    def build_from_lerobot_sample(self, sample: dict[str, Any], mode: str) -> dict[str, Any]:
+        """Build a training sample from one LeRobot item (the ``delta_timestamps`` window).
+
+        Split out of ``__getitem__`` so world-model inference can feed a synthesized item
+        (current observation + planned actions) through exactly the training code path.
+        """
         action = self._build_frame_wise_action(sample[_ACTION_FEATURE])  # [chunk, 10]
 
         if self._use_base_action:
@@ -544,8 +677,23 @@ class RoboCasaLeRobotDataset(BaseActionLeRobotDataset):
                 )  # [action_dim]
             action = torch.cat([initial_state.unsqueeze(0), action], dim=0)  # [chunk+1, action_dim]
 
+        if self._state_stream:
+            assert self._state_stats is not None
+            native16 = official_state_to_native16(sample[_STATE_FEATURE][-self._chunk_length - 1 :])  # [chunk+1,16]
+            state_extras["state"] = normalize_state(encode_native16_state(native16), self._state_stats).float()
+
+        extras: dict[str, Any] = {}
         if self._skip_video_loading:
             video = None
+        elif self._camera_set == "three_view":
+            num_frames = self._chunk_length + 1
+            video = torch.cat([sample[self._image_features[v]] for v in _THREE_VIEW_ORDER], dim=0)  # [3T,C,H,W]
+            extras.update(
+                enable_per_camera_vae_encoding=True,
+                sample_n_views=len(_THREE_VIEW_ORDER),
+                num_video_frames_per_view=num_frames,
+                video_num_frames=num_frames,  # logical clip length for the sequence plan and prompt
+            )
         elif self._camera_set == "left_wrist":
             video = self._compose_left_wrist(sample)
         elif self._viewpoint == "concat_view":
@@ -557,8 +705,12 @@ class RoboCasaLeRobotDataset(BaseActionLeRobotDataset):
 
         ai_caption = sample["task"]
 
-        extras: dict[str, Any] = {}
-        if self._camera_set == "left_wrist":
+        if self._camera_set == "three_view":
+            extras["additional_view_description"] = (
+                "Three separate synchronized camera views, in order: the left third-person view, "
+                "the right third-person view, and the wrist-mounted camera."
+            )
+        elif self._camera_set == "left_wrist":
             extras["additional_view_description"] = (
                 "The left half is a third-person view of the scene. "
                 "The right half is from the wrist-mounted camera."

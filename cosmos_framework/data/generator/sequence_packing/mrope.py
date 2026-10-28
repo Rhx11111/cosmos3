@@ -85,6 +85,7 @@ def get_3d_mrope_ids_vae_tokens(
     start_frame_offset: int = 0,
     temporal_positions: torch.Tensor | None = None,
     temporal_position_period: int | None = None,
+    views_side_by_side: bool = False,
 ) -> tuple[torch.Tensor, int | float]:
     """Generate 3D mRoPE position IDs for VAE vision tokens (image/video latents).
 
@@ -118,6 +119,9 @@ def get_3d_mrope_ids_vae_tokens(
             When provided, positions can be fractional and must have shape ``(grid_t,)``.
         temporal_position_period: Optional period for latent-index temporal coordinates.
             Multiview camera-major grids set this to the latent frames per view.
+        views_side_by_side: With ``temporal_position_period``, offset view ``v``'s width
+            indices by ``v * grid_w`` so camera-major views sharing temporal coordinates sit
+            side by side (as in a horizontal concat) instead of on identical positions.
 
     Returns:
         Tuple of:
@@ -200,6 +204,11 @@ def get_3d_mrope_ids_vae_tokens(
     w_index = (
         torch.arange(grid_w, dtype=torch.long, device=device).view(1, 1, -1).expand(grid_t, grid_h, -1).flatten()
     )  # [grid_t*grid_h*grid_w]
+    if views_side_by_side:
+        if temporal_position_period is None:
+            raise ValueError("views_side_by_side requires temporal_position_period.")
+        view_index = torch.arange(grid_t, dtype=torch.long, device=device) // temporal_position_period  # [grid_t]
+        w_index = w_index + (view_index * grid_w).view(-1, 1).expand(-1, grid_h * grid_w).flatten()
 
     if not reset_spatial_indices:
         # Qwen2VL-style: offset all axes by temporal_offset (use int for spatial)

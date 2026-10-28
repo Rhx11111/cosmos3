@@ -408,6 +408,35 @@ def build_sequence_plan_from_mode(
     )
 
 
+def append_state_tokens(action: torch.Tensor, state: torch.Tensor, sequence_plan: SequencePlan) -> torch.Tensor:
+    """Append per-frame state tokens to a forward-dynamics action stream.
+
+    The model has no state modality, so world-model rollouts carry state as extra tokens
+    of the action stream, in their own channels so the shared action embedding sees
+    disjoint inputs::
+
+        tokens   [a_1 .. a_T | s_0 .. s_T]
+        channels [0:D_a]     | [D_a:D_a+D_s]
+
+    All actions and ``s_0`` (the current state) are clean conditioning; ``s_1..s_T`` are
+    noised with the sample's video sigma and supervised by the action flow-matching loss.
+    ``sequence_plan.action_state_tokens`` positions the state tokens on vision frames
+    0..T. Mutates ``sequence_plan`` and returns the merged ``[T_a+T_s, D_a+D_s]`` tensor.
+    """
+    if sequence_plan.action_start_frame_offset != 1 or len(sequence_plan.condition_frame_indexes_action) != len(
+        action
+    ):
+        raise ValueError("state tokens are only supported for forward dynamics without an initial-state action")
+    num_actions, action_dim = action.shape
+    num_states, state_dim = state.shape
+    merged = action.new_zeros(num_actions + num_states, action_dim + state_dim)  # [T_a+T_s,D_a+D_s]
+    merged[:num_actions, :action_dim] = action
+    merged[num_actions:, action_dim:] = state.to(action.dtype)
+    sequence_plan.condition_frame_indexes_action = list(range(num_actions + 1))
+    sequence_plan.action_state_tokens = num_states
+    return merged
+
+
 class VideoResize:
     """Resize and reflection-pad video-aligned tensors for a single sample.
 
@@ -822,6 +851,19 @@ class ActionTransformPipeline:
         data_dict["sequence_plan"] = sequence_plan
 
         assert isinstance(action, torch.Tensor), "action tensor is required for action modes"
+
+        # Per-frame state stream (world-model rollouts): appended to the action stream as extra
+        # tokens in their own channels; see ``append_state_tokens``.
+        state = data_dict.pop("state", None)
+        if state is not None:
+            if action_normalizer is not None or normalized_action is not None or action_valid_mask is not None:
+                raise ValueError("state tokens require an unnormalized action without a valid mask")
+            if num_history_actions:
+                raise ValueError("state tokens do not support history actions")
+            if state.shape[0] != video_length:
+                raise ValueError(f"state has {state.shape[0]} frames, video has {video_length}")
+            action = append_state_tokens(action, state, sequence_plan)  # [T_a+T_s,D_a+D_s]
+
         data_dict = self.action_processor.preprocess_action(
             data_dict,
             action,

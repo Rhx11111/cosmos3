@@ -21,6 +21,7 @@ from cosmos_framework.data.generator.action.utils.domain_utils import (
 )
 from cosmos_framework.data.generator.action.utils.json_formatter import ActionPromptJsonFormatter
 from cosmos_framework.data.generator.action.utils.transforms import (
+    append_state_tokens,
     build_sequence_plan_from_mode,
     find_closest_target_size,
     reflection_pad_to_target,
@@ -108,8 +109,16 @@ def build_action_batch(
     input_video_key: str,
     batch_size: int = 1,
     device: Any = "cuda",
+    state: torch.Tensor | None = None,
 ) -> dict:
-    """Build an Action data batch from pre-loaded video and action tensors."""
+    """Build an Action data batch from pre-loaded video and action tensors.
+
+    ``state`` (forward dynamics only) is the normalized current state ``[D_s]``. It is
+    appended as the clean token ``s_0`` followed by ``action_chunk_size`` placeholder state
+    tokens that the model denoises; the generated action stream is then
+    ``[action_chunk_size + 1 + action_chunk_size, raw_action_dim + D_s]`` with the predicted
+    states in ``[action_chunk_size + 1:, raw_action_dim:]`` (see ``append_state_tokens``).
+    """
     target_frames = action_chunk_size + 1
     _, num_frames, h, w = video.shape
 
@@ -134,7 +143,6 @@ def build_action_batch(
         action_length=action_chunk_size,
         has_text=True,
     )
-
     ai_caption = _format_prompt(
         prompt=prompt,
         view_point=view_point,
@@ -143,6 +151,16 @@ def build_action_batch(
         fps=torch.tensor(fps, dtype=torch.long),
         image_size=padded_image_size,
     )
+
+    # Append state after the prompt is built, matching training (the prompt sees actions only).
+    if state is not None:
+        if model_mode is not ModelMode.FORWARD_DYNAMICS:
+            raise ValueError("state tokens are only supported in forward_dynamics mode")
+        states = state.new_zeros(target_frames, state.shape[-1])  # [T+1,D_s]; rows 1.. are denoised
+        states[0] = state
+        merged = append_state_tokens(action[:, :raw_action_dim], states, sequence_plan)  # [2T+1,D_a+D_s]
+        raw_action_dim = merged.shape[-1]
+        action = pad_action_to_max_dim(merged, action.shape[-1])  # [2T+1,D_model]
 
     action_processing_record = ActionProcessingRecord(
         raw_action_dim=raw_action_dim,

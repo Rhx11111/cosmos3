@@ -263,6 +263,7 @@ class PackedSequenceBuilder:
         temporal_compression_factor: int,
         vision_temporal_positions: torch.Tensor | None,
         temporal_position_period: int | None,
+        views_side_by_side: bool = False,
     ) -> int:
         """Pack vision tokens into the sequence.
 
@@ -282,6 +283,8 @@ class PackedSequenceBuilder:
             vision_temporal_positions: Optional explicit temporal coordinate per latent
                 frame, shape ``(T,)``. Used by UniAE to account for kept boundary latents.
             temporal_position_period: Optional period for latent-index temporal coordinates.
+            views_side_by_side: Lay camera-major views side by side along width in mRoPE
+                (see ``get_3d_mrope_ids_vae_tokens``).
 
         Returns:
             Vision split length.
@@ -299,6 +302,7 @@ class PackedSequenceBuilder:
             base_temporal_compression_factor=temporal_compression_factor,
             temporal_positions=vision_temporal_positions,
             temporal_position_period=temporal_position_period,
+            views_side_by_side=views_side_by_side,
         )
 
     def pack_lidar_tokens(
@@ -367,6 +371,7 @@ class PackedSequenceBuilder:
         base_temporal_compression_factor: int,
         temporal_positions: torch.Tensor | None,
         temporal_position_period: int | None,
+        views_side_by_side: bool = False,
     ) -> int:
         """Pack one ``(C, T, H, W)`` latent clip into ``modality``, frame by frame.
 
@@ -424,6 +429,7 @@ class PackedSequenceBuilder:
             base_temporal_compression_factor=base_temporal_compression_factor,
             temporal_positions=temporal_positions,
             temporal_position_period=temporal_position_period,
+            views_side_by_side=views_side_by_side,
         )  # mrope_ids: [3,N_tokens]
         mrope_ids = mrope_ids.reshape(3, latent_t, frame_token_stride)  # [3,T,H*W]
 
@@ -463,6 +469,7 @@ class PackedSequenceBuilder:
         base_temporal_compression_factor: int | None = None,
         action_start_frame_offset: int = 1,
         action_frame_indexes: list[int] | None = None,
+        action_state_tokens: int = 0,
     ) -> int:
         """Pack action tokens into the sequence.
 
@@ -485,6 +492,8 @@ class PackedSequenceBuilder:
                 the consecutive layout starting at ``action_start_frame_offset`` so one
                 payload can hold several row streams (e.g. actions, then states) that
                 each run on the vision clock. Must have one entry per row.
+            action_state_tokens: Number of trailing per-frame state tokens. They get their own
+                temporal grid starting at vision frame 0 so state[k] shares frame k's position.
 
         Returns:
             Number of action tokens added.
@@ -495,6 +504,9 @@ class PackedSequenceBuilder:
                 f"action_frame_indexes must have one entry per action row; got {len(action_frame_indexes)} "
                 f"entries for {action_split_len} rows."
             )
+        if action_frame_indexes is not None and action_state_tokens:
+            raise ValueError("action_frame_indexes and action_state_tokens are mutually exclusive.")
+        assert 0 <= action_state_tokens <= action_split_len, (action_state_tokens, action_split_len)
 
         action = self.ensure_action()
 
@@ -523,25 +535,48 @@ class PackedSequenceBuilder:
         # so action[0] (null token) aligns with vision frame 1, not frame 0.
         effective_fps = action_fps if enable_fps_modulation else None
 
-        # Explicit frame indexes are gathered from one consecutive grid that spans
-        # them, so every row lands exactly where the consecutive layout would have
-        # put a row of that frame.
-        first_frame = min(action_frame_indexes) if action_frame_indexes is not None else action_start_frame_offset
-        grid_t = max(action_frame_indexes) - first_frame + 1 if action_frame_indexes is not None else action_split_len
-        action_mrope_ids, _ = get_3d_mrope_ids_vae_tokens(
-            grid_t=grid_t,
-            grid_h=1,
-            grid_w=1,
-            temporal_offset=action_temporal_offset,
-            reset_spatial_indices=self._mrope_reset_spatial,
-            fps=effective_fps,
-            base_fps=base_fps,
-            temporal_compression_factor=1,  # Action is at frame rate (no temporal compression)
-            base_temporal_compression_factor=base_temporal_compression_factor,
-            start_frame_offset=first_frame,  # Align action[0] with vision frame first_frame
-        )  # action_mrope_ids: [3,grid_t]
         if action_frame_indexes is not None:
+            # Explicit frame indexes are gathered from one consecutive grid that spans
+            # them, so every row lands exactly where the consecutive layout would have
+            # put a row of that frame.
+            first_frame = min(action_frame_indexes)
+            grid_t = max(action_frame_indexes) - first_frame + 1
+            action_mrope_ids, _ = get_3d_mrope_ids_vae_tokens(
+                grid_t=grid_t,
+                grid_h=1,
+                grid_w=1,
+                temporal_offset=action_temporal_offset,
+                reset_spatial_indices=self._mrope_reset_spatial,
+                fps=effective_fps,
+                base_fps=base_fps,
+                temporal_compression_factor=1,  # Action is at frame rate (no temporal compression)
+                base_temporal_compression_factor=base_temporal_compression_factor,
+                start_frame_offset=first_frame,  # Align action[0] with vision frame first_frame
+            )  # action_mrope_ids: [3,grid_t]
             action_mrope_ids = action_mrope_ids[:, [idx - first_frame for idx in action_frame_indexes]]  # [3,T_action]
+        else:
+            def segment_mrope_ids(grid_t: int, start_frame_offset: int) -> torch.Tensor:
+                mrope_ids, _ = get_3d_mrope_ids_vae_tokens(
+                    grid_t=grid_t,
+                    grid_h=1,
+                    grid_w=1,
+                    temporal_offset=action_temporal_offset,
+                    reset_spatial_indices=self._mrope_reset_spatial,
+                    fps=effective_fps,
+                    base_fps=base_fps,
+                    temporal_compression_factor=1,  # Action is at frame rate (no temporal compression)
+                    base_temporal_compression_factor=base_temporal_compression_factor,
+                    start_frame_offset=start_frame_offset,
+                )
+                return mrope_ids  # [3,grid_t]
+
+            # Align action[0] with vision frame action_start_frame_offset; trailing state tokens
+            # (if any) restart at vision frame 0 so they sit on the same frames as the video.
+            num_actions = action_split_len - action_state_tokens
+            segments = [segment_mrope_ids(num_actions, action_start_frame_offset)] if num_actions else []
+            if action_state_tokens:
+                segments.append(segment_mrope_ids(action_state_tokens, 0))
+            action_mrope_ids = torch.cat(segments, dim=1)  # [3,N_action_tokens]
         # Note: we don't update _mrope_temporal_offset here because action tokens
         # share the temporal space with vision tokens (they run in parallel).
 
@@ -1239,6 +1274,9 @@ class SequencePlan:
             actions followed by proprioceptive states that restart at the first
             conditioning frame. Values may be negative (history before frame 0) and
             repeat across streams; the list length must equal the payload's row count.
+        action_state_tokens: Number of trailing tokens in the action stream that are per-frame
+            state tokens rather than actions. They are positioned from vision frame 0 (state[k]
+            aligns with frame k) instead of ``action_start_frame_offset``. 0 means no state tokens.
         has_sound: Whether sound/audio input is present.
         condition_frame_indexes_sound: Indexes of sound frames that are clean/conditioning.
             [] means all frames are noised/supervised.
@@ -1272,6 +1310,7 @@ class SequencePlan:
     condition_frame_indexes_action: list[int] = field(default_factory=list)
     action_start_frame_offset: int = 1
     action_frame_indexes: list[int] | None = None
+    action_state_tokens: int = 0
 
     # -- sound modality --
     has_sound: bool = False

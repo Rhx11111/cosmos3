@@ -837,6 +837,7 @@ class OmniMoTModel(ImaginaireModel):
             align_temporal_positions_across_views=(
                 self.config.diffusion_expert_config.align_temporal_positions_across_views
             ),
+            multiview_views_side_by_side=self.config.diffusion_expert_config.multiview_views_side_by_side,
             video_temporal_causal=self.config.video_temporal_causal,
             action_dim=self.config.max_action_dim,
             initial_mrope_temporal_offset=initial_mrope_temporal_offset,

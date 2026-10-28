@@ -62,6 +62,9 @@ class DiffusionExpertConfig:
     vision_temporal_position_mode: str = "latent_index"
     # Whether camera-major views reuse the same local temporal mRoPE coordinates.
     align_temporal_positions_across_views: bool = False
+    # With aligned views, also lay views side by side along width in mRoPE (view v's width indices
+    # offset by v * width) so they do not share identical (t, h, w) positions.
+    multiview_views_side_by_side: bool = False
     # For unified_3d_mrope: whether spatial (H, W) indices reset to 0 for each vision segment
     unified_3d_mrope_reset_spatial_ids: bool = True
     # Setting the temporal gap on the boundary of the different modalities, default is 0, using a value greater than 0 will add an additional offset on the accumulated temporal offset.

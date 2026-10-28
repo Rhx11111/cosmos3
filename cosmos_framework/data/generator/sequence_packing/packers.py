@@ -125,6 +125,7 @@ def pack_input_sequence(
     temporal_compression_factor: int = 4,
     vision_temporal_position_mode: str = "latent_index",
     align_temporal_positions_across_views: bool = False,
+    multiview_views_side_by_side: bool = False,
     video_temporal_causal: bool = False,
     action_dim: int = 32,
     initial_mrope_temporal_offset: int | float = 0,
@@ -172,6 +173,8 @@ def pack_input_sequence(
         align_temporal_positions_across_views: If True, camera-major views within one
             vision item reuse the same local temporal coordinates. Disabled by default and requires
             gen_data_clean.num_views_per_vision_item to identify multiview items.
+        multiview_views_side_by_side: With aligned views, also offset each view's width
+            positions so views sit side by side instead of sharing identical (t, h, w) positions.
         video_temporal_causal: If True, pack vision and optional action as temporal-causal
             supertokens instead of separate modality blocks.
         action_dim: Action feature dimension used when temporal-causal packing creates
@@ -571,6 +574,7 @@ def pack_input_sequence(
                         temporal_compression_factor=temporal_compression_factor,
                         vision_temporal_positions=vision_temporal_positions,
                         temporal_position_period=temporal_position_period,
+                        views_side_by_side=multiview_views_side_by_side and temporal_position_period is not None,
                     )
                     if temporal_groups is not None:
                         grouped_end_offset = max(grouped_end_offset, seq_builder.mrope_temporal_offset)
@@ -656,6 +660,7 @@ def pack_input_sequence(
                     base_temporal_compression_factor=temporal_compression_factor,
                     action_start_frame_offset=sequence_plan.action_start_frame_offset,
                     action_frame_indexes=sequence_plan.action_frame_indexes,
+                    action_state_tokens=sequence_plan.action_state_tokens,
                 )
                 sample_len += action_split_len
             else:
